@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Steem Follow Reciprocity</title>
+
+<style>
+:root{
+  --border:#e5e5e5;
+  --soft:#f7f7f7;
+  --ok:#0a7a0a;
+  --no:#b00020;
+}
+
+body{
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  margin:14px;
+  background:#fff;
+  color:#111;
+}
+
+.wrap{
+  max-width:900px;
+  margin:0 auto;
+}
+
+h1{
+  font-size:18px;
+  margin:0 0 12px 0;
+}
+
+.toolbar{
+  display:flex;
+  gap:10px;
+  margin-bottom:12px;
+  align-items:center;
+}
+
+.toolbar input{
+  flex:1;
+  padding:8px 12px;
+  border:1px solid var(--border);
+  border-radius:20px;
+  font-size:15px;
+}
+
+.toolbar button{
+  padding:8px 14px;
+  border:1px solid var(--border);
+  border-radius:20px;
+  background:#111;
+  color:#fff;
+  cursor:pointer;
+  font-size:15px;
+}
+
+.status{
+  font-size:13px;
+  color:#666;
+  margin-left:8px;
+}
+
+.card{
+  border:1px solid var(--border);
+  border-radius:12px;
+  overflow:hidden;
+}
+
+table{
+  width:100%;
+  border-collapse:collapse;
+  table-layout:fixed;
+}
+
+thead{
+  background:var(--soft);
+}
+
+th, td{
+  padding:8px 6px;
+  border-bottom:1px solid var(--border);
+  text-align:left;
+  font-size:14px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+th{
+  font-weight:600;
+  font-size:13px;
+}
+
+tr:last-child td{
+  border-bottom:0;
+}
+
+.col-user{
+  width:40%;
+}
+
+.col-flag{
+  width:10%;
+}
+
+a{
+  text-decoration:none;
+  color:inherit;
+}
+
+a:hover{
+  text-decoration:underline;
+}
+
+.flag{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:20px;
+  height:20px;
+  /*border-radius:50%;
+  border:1px solid var(--border);*/
+  font-size:12px;
+  font-weight:700;
+  line-height:1;
+}
+
+.flag.ok{ color:var(--ok); }
+.flag.no{ color:var(--no); }
+
+/* MOBILE ADJUSTMENTS */
+@media (max-width:600px){
+
+  body{
+    margin:8px;
+  }
+
+  h1{
+    font-size:16px;
+  }
+
+  th, td{
+    padding:6px 4px;
+    font-size:12px;
+  }
+
+  th{
+    font-size:11px;
+  }
+
+  .flag{
+    width:18px;
+    height:18px;
+    font-size:11px;
+  }
+}
+
+.error{
+  margin-top:10px;
+  padding:8px;
+  border:1px solid #f3c2c2;
+  background:#fff5f5;
+  color:#900;
+  border-radius:10px;
+  display:none;
+  font-size:13px;
+}
+</style>
+</head>
+
+<body>
+<div class="wrap">
+
+<h1>Steemit Follow Reciprocity</h1>
+
+<div class="toolbar">
+  <input id="user" placeholder="Enter username" value="">
+  <button id="go">Load</button>
+  <span class="status" id="status"></span>
+</div>
+
+<div class="card" id="tableCard" style="display:none;">
+<table>
+  <thead>
+    <tr>
+      <th class="col-user">Followers</th>
+      <th class="col-flag">Mutual</th>
+      <th class="col-user">Following</th>
+      <th class="col-flag">Mutual</th>
+    </tr>
+  </thead>
+  <tbody id="tbody"></tbody>
+</table>
+</div>
+
+<div class="error" id="error"></div>
+
+</div>
+
+<script>
+
+const RPCS = [
+  "https://api.steemit.com",
+  "https://api.moecki.online",
+  "https://api.justyy.com"
+];
+
+async function rpcCall(url, method, params){
+  const r = await fetch(url,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({jsonrpc:"2.0",id:1,method,params})
+  });
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  const j = await r.json();
+  if(j.error) throw new Error(j.error.message || "RPC error");
+  return j.result;
+}
+
+async function rpcAny(method, params){
+  let lastErr;
+  for(const url of RPCS){
+    try{ return await rpcCall(url,method,params); }
+    catch(e){ lastErr=e; }
+  }
+  throw lastErr;
+}
+
+async function getFollowing(user){
+  const out=[];
+  let start="";
+  while(true){
+    const chunk = await rpcAny("condenser_api.get_following",[user,start,"blog",100]);
+    if(!chunk.length) break;
+    chunk.forEach(r=>out.push(r.following));
+    if(chunk.length<100) break;
+    start = chunk[chunk.length-1].following;
+  }
+  return [...new Set(out)].sort();
+}
+
+async function getFollowers(user){
+  const out=[];
+  let start="";
+  while(true){
+    const chunk = await rpcAny("condenser_api.get_followers",[user,start,"blog",100]);
+    if(!chunk.length) break;
+    chunk.forEach(r=>out.push(r.follower));
+    if(chunk.length<100) break;
+    start = chunk[chunk.length-1].follower;
+  }
+  return [...new Set(out)].sort();
+}
+
+function flag(isMutual){
+  return `<span class="flag ${isMutual?"ok":"no"}">${isMutual?"✓":"✕"}</span>`;
+}
+
+async function run(){
+  const user = document.getElementById("user").value.trim().replace("@","");
+  if(!user){
+    showError("Enter username.");
+    return;
+  }
+
+  hideError();
+  document.getElementById("status").textContent="Loading...";
+  document.getElementById("tableCard").style.display="none";
+  document.getElementById("tbody").innerHTML="";
+
+  try{
+    const following = await getFollowing(user);
+    const followers = await getFollowers(user);
+
+    const setFollowing = new Set(following);
+    const setFollowers = new Set(followers);
+
+    const rows = Math.max(following.length, followers.length);
+    const tbody = document.getElementById("tbody");
+
+    for(let i=0;i<rows;i++){
+      const f1 = followers[i]||"";
+      const f2 = following[i]||"";
+
+      const tr = document.createElement("tr");
+
+      tr.innerHTML = `
+        <td>${f1?`<a href="https://steemit.com/@${f1}" target="_blank">@${f1}</a>`:""}</td>
+        <td>${f1?flag(setFollowing.has(f1)):""}</td>
+        <td>${f2?`<a href="https://steemit.com/@${f2}" target="_blank">@${f2}</a>`:""}</td>
+        <td>${f2?flag(setFollowers.has(f2)):""}</td>
+      `;
+
+      tbody.appendChild(tr);
+    }
+
+    document.getElementById("status").textContent="Done";
+    document.getElementById("tableCard").style.display="block";
+
+  }catch(e){
+    showError(e.message);
+    document.getElementById("status").textContent="";
+  }
+}
+
+function showError(msg){
+  const el=document.getElementById("error");
+  el.textContent=msg;
+  el.style.display="block";
+}
+
+function hideError(){
+  const el=document.getElementById("error");
+  el.style.display="none";
+}
+
+document.getElementById("go").addEventListener("click",run);
+document.getElementById("user").addEventListener("keydown",e=>{
+  if(e.key==="Enter") run();
+});
+
+</script>
+</body>
+</html>

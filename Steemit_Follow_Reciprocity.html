@@ -11,6 +11,10 @@
   --soft:#f7f7f7;
   --ok:#0a7a0a;
   --no:#b00020;
+  --muted:#777;
+  --active:#0a7a0a;
+  --dormant:#b36b00;
+  --dead:#b00020;
 }
 
 body{
@@ -59,12 +63,26 @@ h1{
   font-size:13px;
   color:#666;
   margin-left:8px;
+  display:inline-flex;
+  align-items:center;
+  min-height:18px;
 }
 
 .card{
   border:1px solid var(--border);
   border-radius:12px;
   overflow:hidden;
+}
+
+.legend{
+  font-size:11px;
+  color:#666;
+  padding:6px 8px;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  flex-wrap:wrap;
+  gap:14px;
+  align-items:center;
 }
 
 table{
@@ -85,6 +103,7 @@ th, td{
   white-space:nowrap;
   overflow:hidden;
   text-overflow:ellipsis;
+  vertical-align:top;
 }
 
 th{
@@ -96,22 +115,15 @@ tr:last-child td{
   border-bottom:0;
 }
 
-.col-user{
-  width:40%;
-}
-
-.col-flag{
-  width:10%;
-}
+.col-user{ width:40%; }
+.col-flag{ width:10%; }
 
 a{
   text-decoration:none;
   color:inherit;
 }
 
-a:hover{
-  text-decoration:underline;
-}
+a:hover{ text-decoration:underline; }
 
 .flag{
   display:inline-flex;
@@ -119,8 +131,6 @@ a:hover{
   justify-content:center;
   width:20px;
   height:20px;
-  /*border-radius:50%;
-  border:1px solid var(--border);*/
   font-size:12px;
   font-weight:700;
   line-height:1;
@@ -129,31 +139,66 @@ a:hover{
 .flag.ok{ color:var(--ok); }
 .flag.no{ color:var(--no); }
 
-/* MOBILE ADJUSTMENTS */
+.usercell{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  min-width:0;
+}
+
+.userline{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.meta{
+  font-size:11px;
+  color:var(--muted);
+  line-height:1.2;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.badge{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+}
+
+.dot{
+  display:inline-block;
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  flex:0 0 auto;
+  background:#bbb;
+}
+
+.dot.active{ background:var(--active); }
+.dot.dormant{ background:var(--dormant); }
+.dot.dead{ background:var(--dead); }
+
 @media (max-width:600px){
-
-  body{
-    margin:8px;
-  }
-
-  h1{
-    font-size:16px;
-  }
+  body{ margin:8px; }
+  h1{ font-size:16px; }
 
   th, td{
     padding:6px 4px;
     font-size:12px;
   }
 
-  th{
-    font-size:11px;
-  }
+  th{ font-size:11px; }
 
   .flag{
     width:18px;
     height:18px;
     font-size:11px;
   }
+
+  .meta{ font-size:10px; }
+  .dot{ width:6px; height:6px; }
 }
 
 .error{
@@ -181,6 +226,13 @@ a:hover{
 </div>
 
 <div class="card" id="tableCard" style="display:none;">
+
+<div class="legend">
+  <span><span class="dot active"></span> Active: less than 30 days</span>
+  <span><span class="dot dormant"></span> Dormant: 30–180 days</span>
+  <span><span class="dot dead"></span> Dead: more than 180 days</span>
+</div>
+
 <table>
   <thead>
     <tr>
@@ -199,12 +251,96 @@ a:hover{
 </div>
 
 <script>
-
 const RPCS = [
   "https://api.steemit.com",
   "https://api.moecki.online",
   "https://api.justyy.com"
 ];
+
+const CACHE_KEY = "sfr_last_activity_cache_v1";
+const CACHE_TTL_MS = 86400000;
+const ACTIVE_DAYS = 30;
+const DEAD_DAYS = 180;
+
+function nowMs(){ return Date.now(); }
+
+function loadCache(){
+  try{
+    const raw = localStorage.getItem(CACHE_KEY);
+    if(!raw) return {};
+    const obj = JSON.parse(raw);
+    if(!obj || typeof obj !== "object") return {};
+    return obj;
+  }catch(e){
+    return {};
+  }
+}
+
+function saveCache(cache){
+  try{
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+  }catch(e){}
+}
+
+function cacheGet(user){
+  const cache = loadCache();
+  const rec = cache[user];
+  if(!rec) return null;
+  if(!rec.ts || !rec.iso) return null;
+  if(nowMs() - rec.ts > CACHE_TTL_MS) return null;
+  return rec;
+}
+
+function cacheSetMany(mapIso){
+  const cache = loadCache();
+  const ts = nowMs();
+  for(const [u, iso] of Object.entries(mapIso)){
+    cache[u] = { iso, ts };
+  }
+  saveCache(cache);
+}
+
+function parseIso(s){
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : null;
+}
+
+function pickLastActivityIso(acc){
+  const candidates = [
+    acc.last_account_update,
+    acc.last_post,
+    acc.last_vote_time,
+    acc.last_owner_update
+  ].filter(Boolean);
+
+  let best = null;
+  for(const iso of candidates){
+    const t = parseIso(iso);
+    if(t === null) continue;
+    if(best === null || t > best.t) best = { iso, t };
+  }
+  return best ? best.iso : null;
+}
+
+function fmtDdMmYyyy(iso){
+  const t = parseIso(iso);
+  if(t === null) return "—";
+  const d = new Date(t);
+  return d.toLocaleDateString("en-GB").replaceAll("/", "-");
+}
+
+function daysAgo(iso){
+  const t = parseIso(iso);
+  if(t === null) return null;
+  return Math.floor((nowMs() - t) / 86400000);
+}
+
+function lifeStatus(days){
+  if(days === null) return { label:"Unknown", dot:"" };
+  if(days < ACTIVE_DAYS) return { label:"Active", dot:"active" };
+  if(days <= DEAD_DAYS) return { label:"Dormant", dot:"dormant" };
+  return { label:"Dead", dot:"dead" };
+}
 
 async function rpcCall(url, method, params){
   const r = await fetch(url,{
@@ -257,6 +393,103 @@ function flag(isMutual){
   return `<span class="flag ${isMutual?"ok":"no"}">${isMutual?"✓":"✕"}</span>`;
 }
 
+function userCellHtml(name){
+  if(!name) return "";
+  const safe = name.replaceAll('"',"");
+  return `
+    <div class="usercell" data-user="${safe}">
+      <div class="userline">
+        <a href="https://steemit.com/@${safe}" target="_blank">@${safe}</a>
+      </div>
+      <div class="meta" data-meta="${safe}">Last activity: …</div>
+    </div>
+  `;
+}
+
+function chunkArray(arr, size){
+  const out=[];
+  for(let i=0;i<arr.length;i+=size) out.push(arr.slice(i,i+size));
+  return out;
+}
+
+async function fetchAccountsBatch(names){
+  const accounts = await rpcAny("condenser_api.get_accounts",[names]);
+  const map = {};
+  for(const acc of accounts){
+    const iso = pickLastActivityIso(acc);
+    if(iso) map[acc.name] = iso;
+  }
+  return map;
+}
+
+function updateUserMeta(username, iso){
+  const metaEls = document.querySelectorAll(`.meta[data-meta="${username}"]`);
+  if(!metaEls.length) return;
+
+  if(!iso){
+    metaEls.forEach(el => { el.textContent = "Last activity: —"; });
+    return;
+  }
+
+  const d = fmtDdMmYyyy(iso);
+  const days = daysAgo(iso);
+  const st = lifeStatus(days);
+  const daysTxt = days === null ? "" : ` (${days}d)`;
+
+  const html = `
+    <span class="badge">
+      <span class="dot ${st.dot}"></span>
+      <span>Last activity: ${d} — ${st.label}${daysTxt}</span>
+    </span>
+  `;
+
+  metaEls.forEach(el => { el.innerHTML = html; });
+}
+
+async function loadAndRenderActivity(usernames){
+  const unique = [...new Set(usernames.filter(Boolean))];
+  const toFetch = [];
+
+  for(const u of unique){
+    const rec = cacheGet(u);
+    if(rec && rec.iso){
+      updateUserMeta(u, rec.iso);
+    }else{
+      toFetch.push(u);
+    }
+  }
+
+  if(!toFetch.length) return;
+
+  const batches = chunkArray(toFetch, 80);
+  const fetchedAll = {};
+
+  for(let i=0;i<batches.length;i++){
+    const batch = batches[i];
+    const st = document.getElementById("status");
+    if(st && st.textContent){
+      st.textContent = `Loading… (${Math.min((i+1)*80, toFetch.length)}/${toFetch.length})`;
+    }
+
+    let map = {};
+    try{
+      map = await fetchAccountsBatch(batch);
+    }catch(e){
+      continue;
+    }
+
+    for(const u of batch){
+      const iso = map[u] || null;
+      if(iso) fetchedAll[u] = iso;
+      updateUserMeta(u, iso);
+    }
+  }
+
+  if(Object.keys(fetchedAll).length){
+    cacheSetMany(fetchedAll);
+  }
+}
+
 async function run(){
   const user = document.getElementById("user").value.trim().replace("@","");
   if(!user){
@@ -284,19 +517,22 @@ async function run(){
       const f2 = following[i]||"";
 
       const tr = document.createElement("tr");
-
       tr.innerHTML = `
-        <td>${f1?`<a href="https://steemit.com/@${f1}" target="_blank">@${f1}</a>`:""}</td>
+        <td>${userCellHtml(f1)}</td>
         <td>${f1?flag(setFollowing.has(f1)):""}</td>
-        <td>${f2?`<a href="https://steemit.com/@${f2}" target="_blank">@${f2}</a>`:""}</td>
+        <td>${userCellHtml(f2)}</td>
         <td>${f2?flag(setFollowers.has(f2)):""}</td>
       `;
-
       tbody.appendChild(tr);
     }
 
     document.getElementById("status").textContent="Done";
     document.getElementById("tableCard").style.display="block";
+
+    const allNames = followers.concat(following);
+    await loadAndRenderActivity(allNames);
+
+    document.getElementById("status").textContent="Done";
 
   }catch(e){
     showError(e.message);
@@ -319,7 +555,6 @@ document.getElementById("go").addEventListener("click",run);
 document.getElementById("user").addEventListener("keydown",e=>{
   if(e.key==="Enter") run();
 });
-
 </script>
 </body>
 </html>
